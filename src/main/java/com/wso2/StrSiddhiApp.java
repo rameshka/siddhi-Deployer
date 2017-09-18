@@ -78,20 +78,31 @@ public class StrSiddhiApp {
     public String toString() {
 
         StringBuilder stringBuilder = new StringBuilder("@App:name(\"" + appName + "\") \n");
+        String s;
 
         for (Map.Entry<String, String> entry : inputStreamMap.entrySet()) {
 
-            stringBuilder.append(entry.getValue()).append(";\n");
+            s= entry.getValue();
+            if(s!= null){
+                stringBuilder.append(entry.getValue()).append(";\n");
+            }
+
+
+
         }
 
-        stringBuilder.append("\n");
+
 
         for (Map.Entry<String, String> entry : outputStreamMap.entrySet()) {
 
-            stringBuilder.append(entry.getValue()).append(";\n");
+            s= entry.getValue();
+            if(s!= null){
+                stringBuilder.append(entry.getValue()).append(";\n");
+            }
+
+
         }
 
-        stringBuilder.append("\n");
 
         for (int i = 0; i < queryList.size(); i++) {
             stringBuilder.append(queryList.get(i)).append(";\n");

@@ -2,6 +2,8 @@ package com.wso2;
 
 
 import org.apache.log4j.Logger;
+import org.wso2.siddhi.core.SiddhiAppRuntime;
+import org.wso2.siddhi.core.SiddhiManager;
 import org.wso2.siddhi.query.api.SiddhiApp;
 import org.wso2.siddhi.query.api.execution.ExecutionElement;
 import org.wso2.siddhi.query.api.execution.query.Query;
@@ -9,7 +11,7 @@ import org.wso2.siddhi.query.api.util.ExceptionUtil;
 import org.wso2.siddhi.query.compiler.SiddhiCompiler;
 
 import java.sql.Timestamp;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,13 +21,15 @@ public class SiddhiDeployer {
 
     private int[] queryContextStartIndex;
     int[] queryContextEndIndex;
-    private Map<String, StrSiddhiApp> distributiveMap = new HashMap<String, StrSiddhiApp>();
+    private Map<String, StrSiddhiApp> distributiveMap;
+    private SiddhiAppRuntime siddhiAppRuntime;
+
 
     private static final Logger log = Logger.getLogger(SiddhiDeployer.class);
 
 
     public SiddhiDeployer() {
-        this.distributiveMap = new HashMap<String, StrSiddhiApp>();
+        this.distributiveMap = new LinkedHashMap<String, StrSiddhiApp>();
     }
 
     public static void main(String[] args) {
@@ -38,14 +42,14 @@ public class SiddhiDeployer {
                 "@Source(type = 'tcp', context='SmartHomeData',\n" +
                 "@map(type='binary')) " +
                 "define stream SmartHomeData (id string, value float, property bool, plugId int, householdId int, houseId int, currentTime string); " +
-                "@sink(type='tcp', url='tcp://localhost:9893/OutputStream',context='OutputStream', port='9893'," +
+                "@Sink(type='tcp', url='tcp://localhost:9893/OutputStream',context='OutputStream', port='9893'," +
                 "@map(type='binary')) " +
                 "define stream OutputStream (houseId int, maxVal float, minVal float, avgVal double); " +
-                "@info(name='query1') @dist(execGroup='group1') " +
+                "@info(name = 'query1') @dist(execGroup='group1')" +
                 "from SmartHomeData " +
                 "select houseId as houseId, max(value) as maxVal, min(value) as minVal, avg(value) as avgVal group by houseId " +
                 "insert into UsageStream; " +
-                "@info(name='query2') @dist(execGroup='group2')  " +
+                "@info(name = 'query2') @dist(execGroup='group2')" +
                 "from UsageStream " +
                 "select houseId, maxVal, minVal, avgVal " + "insert into OutputStream;";
 
@@ -88,15 +92,21 @@ public class SiddhiDeployer {
 
 
         siddhiDeployer.DistributeSiddiApp(siddhiAppString);
+        siddhiDeployer.connectApplications();
 
 
     }
+    //TODO:if its a window parallelism in not allowed
 
 
     public void DistributeSiddiApp(String siddhiAppString) {
 
         StrSiddhiApp siddhiAppdist;
+        List<String> listInputStream;
         SiddhiApp siddhiApp = SiddhiCompiler.parse(siddhiAppString);
+
+        SiddhiManager siddhiManager = new SiddhiManager();
+        siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(siddhiAppString);
 
         String groupName;
 
@@ -104,8 +114,7 @@ public class SiddhiDeployer {
 
             groupName = null;
 
-            for (int i = 0; i < executionElement.getAnnotations().size(); i++)
-            {
+            for (int i = 0; i < executionElement.getAnnotations().size(); i++) {
                 if (executionElement.getAnnotations().get(i).getElement("execGroup") != null) {
                     groupName = executionElement.getAnnotations().get(i).getElement("execGroup");
 
@@ -136,7 +145,7 @@ public class SiddhiDeployer {
                 }
 
 
-                List<String> listInputStream = ((Query) executionElement).getInputStream().getAllStreamIds();
+                listInputStream = ((Query) executionElement).getInputStream().getAllStreamIds();
 
                 for (int j = 0; j < listInputStream.size(); j++) {
                     String inputStreamId = listInputStream.get(j);
@@ -166,12 +175,6 @@ public class SiddhiDeployer {
 
             }
 
-
-        }
-
-
-        for (StrSiddhiApp strSiddhiApp : distributiveMap.values()) {
-            System.out.println(strSiddhiApp.toString());
 
         }
 
@@ -210,20 +213,64 @@ public class SiddhiDeployer {
     }
 
 
-    private LinkedHashMap<String,String> connectApplications(){
+    private void connectApplications()
+
+    {
+        List<String> stream;
+        List<StrSiddhiApp> listSiddhiApps = new ArrayList<StrSiddhiApp>(distributiveMap.values());
+
+        for (int i = 0; i < listSiddhiApps.size(); i++) {
+
+            stream = new ArrayList<String>(listSiddhiApps.get(i).getOutputStreamMap().keySet());
+
+            for (int j = i + 1; j < listSiddhiApps.size(); j++) {
 
 
-        for (StrSiddhiApp strSiddhiApp:distributiveMap.values()){
-            //if (strSiddhiApp.ge
+                //TODO:check if outputStream can be only 1
+
+                if (listSiddhiApps.get(j).getInputStreamMap().containsKey(stream.get(0))) {
+                    if (listSiddhiApps.get(j).getInputStreamMap().containsKey(stream.get(0))) {
+
+
+                        String definition = returnStream(stream.get(0), listSiddhiApps.get(i));
+                        StringBuilder stringBuilder1 = new StringBuilder("@Sink(type = 'tcp',url='tcp://${" + listSiddhiApps.get(i).getAppName() + " sink_ip}:{" + listSiddhiApps.get(i).getAppName() + " sink_port}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
+
+                        listSiddhiApps.get(i).getOutputStreamMap().put(stream.get(0), stringBuilder1.toString());
+                        StringBuilder stringBuilder2 = new StringBuilder("@Source(type = 'tcp',url='tcp://${" + listSiddhiApps.get(j).getAppName() + " source_ip}:{" + listSiddhiApps.get(j).getAppName() + " source_port}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
+                        listSiddhiApps.get(j).getInputStreamMap().put(stream.get(0), stringBuilder2.toString());
+
+                    }
+
+
+                }
+            }
+        }
+
+        for (int i = 0; i < listSiddhiApps.size(); i++) {
+            System.out.println(listSiddhiApps.get(i).toString());
+
         }
 
 
-
-
-
-
-        return new LinkedHashMap<String, String>();
     }
 
+    private String returnStream(String key, StrSiddhiApp strSiddhiApp) {
 
+        if (siddhiAppRuntime.getStreamDefinitionMap().containsKey(key))
+        {
+            return siddhiAppRuntime.getStreamDefinitionMap().get(key).toString();
+
+        } else if (siddhiAppRuntime.getTableDefinitionMap().containsKey(key))
+        {
+            return siddhiAppRuntime.getTableDefinitionMap().get(key).toString();
+
+        } else if (strSiddhiApp.getOutputStreamMap().containsKey(key)) {
+
+            return strSiddhiApp.getOutputStreamMap().get(key);
+
+        } else {
+            return null;
+        }
+
+    }
 }
