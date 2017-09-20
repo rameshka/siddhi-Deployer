@@ -12,15 +12,25 @@ public class StrSiddhiApp {
     private Map<String, String> outputStreamMap;
     private List<String> queryList;
     private String appName;
+    private String parallel;
 
 
     public String getAppName() {
         return appName;
     }
 
+    public String getParallel() {
+        return parallel;
+    }
+
+    public void setParallel(String parallel) {
+        this.parallel = parallel;
+    }
+
     public void setAppName(String appName) {
         this.appName = appName;
     }
+
 
     public void setInputStream(String key, String inputStream) {
         if (inputStreamMap == null) {
@@ -110,6 +120,44 @@ public class StrSiddhiApp {
 
         return stringBuilder.toString();
     }
+
+    public String toJsonString(){
+        StringBuilder stringBuilder = new StringBuilder();
+        String s;
+
+        for (Map.Entry<String, String> entry : inputStreamMap.entrySet()) {
+
+            s= entry.getValue();
+            if(s!= null){
+                stringBuilder.append(entry.getValue()).append("; ");
+            }
+
+
+
+        }
+
+
+
+        for (Map.Entry<String, String> entry : outputStreamMap.entrySet()) {
+
+            s= entry.getValue();
+            if(s!= null){
+                stringBuilder.append(entry.getValue()).append("; ");
+            }
+
+
+        }
+
+
+        for (int i = 0; i < queryList.size(); i++) {
+            stringBuilder.append(queryList.get(i)).append("; ");
+        }
+
+        return stringBuilder.toString();
+
+    }
+
+
 
 
 }
