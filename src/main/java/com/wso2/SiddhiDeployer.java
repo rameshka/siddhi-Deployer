@@ -43,14 +43,14 @@ public class SiddhiDeployer {
                 "@Source(type = 'tcp', context='SmartHomeData'," +
                 "@map(type='binary')) " +
                 "define stream SmartHomeData (id string, value float, property bool, plugId int, householdId int, houseId int, currentTime string); " +
-                "@Sink(type='tcp', url='tcp://wso2-ThinkPad-T530:9992/OutputStream',context='OutputStream', port='9992'," +
+                "@Sink(type='tcp', url='tcp://wso2-ThinkPad-T530:{}/OutputStream',context='OutputStream', port='9992'," +
                 "@map(type='binary')) " +
                 "define stream OutputStream (houseId int, maxVal float, minVal float, avgVal double); " +
                 "@info(name = 'query1') @dist(parallel ='1',execGroup='group1')" +
                 "from SmartHomeData " +
                 "select houseId as houseId, max(value) as maxVal, min(value) as minVal, avg(value) as avgVal group by houseId " +
                 "insert into UsageStream; " +
-                "@info(name = 'query2') @dist(parallel ='1', execGroup='group2')" +
+                "@info(name = 'query2') @dist(parallel ='2', execGroup='group2')" +
 
                 "from UsageStream " +
                 "select houseId, maxVal, minVal, avgVal " + "insert into OutputStream;";
@@ -97,7 +97,7 @@ public class SiddhiDeployer {
         try {
             siddhiDeployer.connectApplications();
         } catch (IOException e) {
-            logger.error("Distributed execution plan creation failure",e);
+            logger.error("Distributed execution plan creation failure", e);
         }
 
 
@@ -116,11 +116,10 @@ public class SiddhiDeployer {
         siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(siddhiAppString);
 
         String groupName = null;
-        String parallel="1";
+        String parallel = "1";
 
 
         for (ExecutionElement executionElement : siddhiApp.getExecutionElementList()) {
-
 
 
             for (int i = 0; i < executionElement.getAnnotations().size(); i++) {
@@ -171,8 +170,8 @@ public class SiddhiDeployer {
                 String outputStreamId = ((Query) executionElement).getOutputStream().getId();
                 outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString);
 
-                if (outputStreamDefinition == null){
-                    outputStreamDefinition =returnInferredStream(outputStreamId);
+                if (outputStreamDefinition == null) {
+                    outputStreamDefinition = returnInferredStream(outputStreamId);
                 }
                 siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition);
 
@@ -234,24 +233,42 @@ public class SiddhiDeployer {
     {
         List<String> stream;
         List<StrSiddhiApp> listSiddhiApps = new ArrayList<StrSiddhiApp>(distributiveMap.values());
+        int parallel;
+
+        StringBuilder stringBuilder1;
 
         for (int i = 0; i < listSiddhiApps.size(); i++) {
 
+            //TODO:check if outputStream can be only 1
             stream = new ArrayList<String>(listSiddhiApps.get(i).getOutputStreamMap().keySet());
 
             for (int j = i + 1; j < listSiddhiApps.size(); j++) {
 
-
-                //TODO:check if outputStream can be only 1
-
                 if (listSiddhiApps.get(j).getInputStreamMap().containsKey(stream.get(0))) {
 
-                        String definition =  listSiddhiApps.get(i).getOutputStreamMap().get(stream.get(0));
-                        StringBuilder stringBuilder1 = new StringBuilder("@Sink(type = 'tcp',url='tcp://${" + listSiddhiApps.get(i).getAppName() + " sink_ip}:{" + listSiddhiApps.get(i).getAppName() + " sink_port}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
+                    String definition = listSiddhiApps.get(i).getOutputStreamMap().get(stream.get(0));
+                    parallel = Integer.parseInt(listSiddhiApps.get(j).getParallel());
 
-                        listSiddhiApps.get(i).getOutputStreamMap().put(stream.get(0), stringBuilder1.toString());
-                        StringBuilder stringBuilder2 = new StringBuilder("@Source(type = 'tcp',url='tcp://${" + listSiddhiApps.get(j).getAppName() + " source_ip}:{" + listSiddhiApps.get(j).getAppName() + " source_port}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
-                        listSiddhiApps.get(j).getInputStreamMap().put(stream.get(0), stringBuilder2.toString());
+                    if (parallel > 1)
+                    {
+                        stringBuilder1 = new StringBuilder("@sink(type='tcp', hostname=${" + listSiddhiApps.get(i).getAppName() + " sink_ip}, " +
+                                "@distribution(strategy='roundRobin'");
+
+                        for (int k = 0; k < parallel; k++) {
+                            stringBuilder1.append(",@destination(port = {" + listSiddhiApps.get(i).getAppName() + " sink_port").append(k+1).append("})");
+                        }
+
+                        stringBuilder1.append("))" + definition);
+
+                    } else
+                    {
+                        stringBuilder1 = new StringBuilder("@Sink(type = 'tcp',url='tcp://${" + listSiddhiApps.get(i).getAppName() + " sink_ip}:{" + listSiddhiApps.get(i).getAppName() + " sink_port1}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
+                    }
+
+
+                    listSiddhiApps.get(i).getOutputStreamMap().put(stream.get(0), stringBuilder1.toString());
+                    StringBuilder stringBuilder2 = new StringBuilder("@Source(type = 'tcp',url='tcp://${" + listSiddhiApps.get(j).getAppName() + " source_ip}:{" + listSiddhiApps.get(j).getAppName() + " source_port}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
+                    listSiddhiApps.get(j).getInputStreamMap().put(stream.get(0), stringBuilder2.toString());
 
                 }
             }
@@ -265,22 +282,20 @@ public class SiddhiDeployer {
 
         //creating JSON configuration file
         CreateJson createJson = new CreateJson();
-        createJson.writeConfiguration(listSiddhiApps,"/home/piyumi/deployment.json");
+        createJson.writeConfiguration(listSiddhiApps, "/home/piyumi/deployment.json");
 
 
     }
 
     private String returnInferredStream(String key) {
 
-        if (siddhiAppRuntime.getStreamDefinitionMap().containsKey(key))
-        {
+        if (siddhiAppRuntime.getStreamDefinitionMap().containsKey(key)) {
             return siddhiAppRuntime.getStreamDefinitionMap().get(key).toString();
 
-        } else if (siddhiAppRuntime.getTableDefinitionMap().containsKey(key))
-        {
+        } else if (siddhiAppRuntime.getTableDefinitionMap().containsKey(key)) {
             return siddhiAppRuntime.getTableDefinitionMap().get(key).toString();
 
-        }  else {
+        } else {
             return null;
         }
 
