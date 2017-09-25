@@ -43,8 +43,8 @@ public class SiddhiDeployer {
                 "@Source(type = 'tcp', context='SmartHomeData'," +
                 "@map(type='binary')) " +
                 "define stream SmartHomeData (id string, value float, property bool, plugId int, householdId int, houseId int, currentTime string); " +
-                "@Sink(type='tcp', url='tcp://wso2-ThinkPad-T530:{}/OutputStream',context='OutputStream', port='9992'," +
-                "@map(type='binary')) " +
+               /* "@Sink(type='tcp', url='tcp://wso2-ThinkPad-T530:{}/OutputStream',context='OutputStream', port='9992'," +
+                "@map(type='binary')) " +*/
                 "define stream OutputStream (houseId int, maxVal float, minVal float, avgVal double); " +
                 "@info(name = 'query1') @dist(parallel ='1',execGroup='group1')" +
                 "from SmartHomeData " +
@@ -234,6 +234,7 @@ public class SiddhiDeployer {
         List<String> stream;
         List<StrSiddhiApp> listSiddhiApps = new ArrayList<StrSiddhiApp>(distributiveMap.values());
         int parallel;
+        String definition;
 
         StringBuilder stringBuilder1;
 
@@ -246,17 +247,18 @@ public class SiddhiDeployer {
 
                 if (listSiddhiApps.get(j).getInputStreamMap().containsKey(stream.get(0))) {
 
-                    String definition = listSiddhiApps.get(i).getOutputStreamMap().get(stream.get(0));
+                     definition = listSiddhiApps.get(i).getOutputStreamMap().get(stream.get(0));
                     parallel = Integer.parseInt(listSiddhiApps.get(j).getParallel());
 
                     if (parallel > 1)
                     {
-                        stringBuilder1 = new StringBuilder("@sink(type='tcp', hostname=${" + listSiddhiApps.get(i).getAppName() + " sink_ip}, " +
+                        stringBuilder1 = new StringBuilder("@sink(type='tcp',  context=\'"+stream.get(0)+"\', @map(type='binary'), " +
                                 "@distribution(strategy='roundRobin'");
 
                         for (int k = 0; k < parallel; k++) {
-                            stringBuilder1.append(",@destination(port = {" + listSiddhiApps.get(i).getAppName() + " sink_port").append(k+1).append("})");
+                            stringBuilder1.append(",@destination(url='tcp://${" + listSiddhiApps.get(i).getAppName() + " sink_ip}:{" + listSiddhiApps.get(i).getAppName() + " sink_port" ).append(k+1).append("}/"+stream.get(0)+"\')");
                         }
+
 
                         stringBuilder1.append("))" + definition);
 
@@ -273,6 +275,15 @@ public class SiddhiDeployer {
                 }
             }
         }
+
+        //adding sink for the output stream of the final query to support testing
+        //unless user has to give the sink
+        //unless it will be a inmemory stream
+        definition = listSiddhiApps.get(listSiddhiApps.size()-1).getOutputStreamMap().get("OutputStream");
+        stringBuilder1 = new StringBuilder("@Sink(type = 'tcp',url='tcp://${" + listSiddhiApps.get(listSiddhiApps.size()-1).getAppName() + " sink_ip}:{" + listSiddhiApps.get(listSiddhiApps.size()-1).getAppName() + " sink_port1}/" + "OutputStream" + "\'" + ", context=\'" +  "OutputStream"+ "\',@map(type='binary'))").append(definition);
+        listSiddhiApps.get(listSiddhiApps.size()-1).getOutputStreamMap().put("OutputStream",stringBuilder1.toString());
+
+
 
         for (int i = 0; i < listSiddhiApps.size(); i++) {
             System.out.println(listSiddhiApps.get(i).toString());
