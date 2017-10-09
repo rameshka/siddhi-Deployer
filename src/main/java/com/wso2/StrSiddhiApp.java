@@ -10,13 +10,14 @@ public class StrSiddhiApp {
 
     private Map<String,StrStream> inputStreamMap;
     private Map<String,StrStream> outputStreamMap;
-    private List<String> queryList;
+    private List<StrQuery> queryList;
     private String appName;
     private String parallel;
 
     public StrSiddhiApp(){
         this.inputStreamMap = new LinkedHashMap< String,StrStream>();
         this.outputStreamMap = new LinkedHashMap<String, StrStream>();
+        this.queryList = new LinkedList<StrQuery>();
 
     }
 
@@ -63,16 +64,11 @@ public class StrSiddhiApp {
         this.outputStreamMap = outputStreamMap;
     }
 
-    public void setQuery(String query) {
+    public void setQuery(String query ,String type) {
 
 
-        if (queryList == null) {
 
-            queryList = new LinkedList<String>();
-            queryList.add(query);
-        } else {
-            queryList.add(query);
-        }
+            queryList.add(new StrQuery(query,type));
     }
 
 
@@ -86,7 +82,7 @@ public class StrSiddhiApp {
 
             s = entry.getValue().getDefinition();
             if (s != null) {
-                stringBuilder.append(entry.getValue()).append(";\n");
+                stringBuilder.append(s).append(";\n");
             }
 
 
@@ -97,7 +93,7 @@ public class StrSiddhiApp {
 
             s = entry.getValue().getDefinition();
             if (s != null) {
-                stringBuilder.append(entry.getValue()).append(";\n");
+                stringBuilder.append(s).append(";\n");
             }
 
 
@@ -105,11 +101,15 @@ public class StrSiddhiApp {
 
 
         for (int i = 0; i < queryList.size(); i++) {
-            stringBuilder.append(queryList.get(i)).append(";\n");
+            stringBuilder.append(queryList.get(i).getQuery()).append(";\n");
         }
 
         return stringBuilder.toString();
     }
+
+
+
+
 
     public String toJsonString() {
         StringBuilder stringBuilder = new StringBuilder();
@@ -119,7 +119,7 @@ public class StrSiddhiApp {
 
             s = entry.getValue().getDefinition();
             if (s != null) {
-                stringBuilder.append(entry.getValue()).append("; ");
+                stringBuilder.append(s).append("; ");
             }
 
 
@@ -130,7 +130,7 @@ public class StrSiddhiApp {
 
             s = entry.getValue().getDefinition();
             if (s != null) {
-                stringBuilder.append(entry.getValue()).append("; ");
+                stringBuilder.append(s).append("; ");
             }
 
 
@@ -138,7 +138,7 @@ public class StrSiddhiApp {
 
 
         for (int i = 0; i < queryList.size(); i++) {
-            stringBuilder.append(queryList.get(i)).append("; ");
+            stringBuilder.append(queryList.get(i).getQuery()).append("; ");
         }
 
         return stringBuilder.toString();
