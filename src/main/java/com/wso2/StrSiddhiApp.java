@@ -8,15 +8,24 @@ import java.util.Map;
 
 public class StrSiddhiApp {
 
-    private Map<String, String> inputStreamMap;
-    private Map<String, String> outputStreamMap;
+    private Map<String,StrStream> inputStreamMap;
+    private Map<String,StrStream> outputStreamMap;
     private List<String> queryList;
     private String appName;
     private String parallel;
 
+    public StrSiddhiApp(){
+        this.inputStreamMap = new LinkedHashMap< String,StrStream>();
+        this.outputStreamMap = new LinkedHashMap<String, StrStream>();
+
+    }
 
     public String getAppName() {
         return appName;
+    }
+
+    public void setAppName(String appName) {
+        this.appName = appName;
     }
 
     public String getParallel() {
@@ -27,47 +36,30 @@ public class StrSiddhiApp {
         this.parallel = parallel;
     }
 
-    public void setAppName(String appName) {
-        this.appName = appName;
+    public void setInputStream(String key, String inputStream,String type) {
+
+            inputStreamMap.put(key, new StrStream(type,inputStream));
     }
 
+    public void setOutputStream(String key, String outputStream,String type) {
 
-    public void setInputStream(String key, String inputStream) {
-        if (inputStreamMap == null) {
-
-            inputStreamMap = new LinkedHashMap<String, String>();
-            inputStreamMap.put(key, inputStream);
-
-        } else {
-            inputStreamMap.put(key, inputStream);
-        }
-    }
-
-    public void setOutputStream(String key, String outputStream) {
-
-        if (outputStreamMap == null) {
-
-            outputStreamMap = new LinkedHashMap<String, String>();
-            outputStreamMap.put(key, outputStream);
-        } else {
-            outputStreamMap.put(key, outputStream);
-        }
+            outputStreamMap.put(key, new StrStream(type,outputStream));
 
     }
 
-    public Map<String, String> getInputStreamMap() {
+    public Map<String,StrStream> getInputStreamMap() {
         return inputStreamMap;
     }
 
-    public void setInputStreamMap(Map<String, String> inputStreamMap) {
+    public void setInputStreamMap(Map<String,StrStream> inputStreamMap) {
         this.inputStreamMap = inputStreamMap;
     }
 
-    public Map<String, String> getOutputStreamMap() {
+    public Map<String,StrStream> getOutputStreamMap() {
         return outputStreamMap;
     }
 
-    public void setOutputStreamMap(Map<String, String> outputStreamMap) {
+    public void setOutputStreamMap(Map<String,StrStream> outputStreamMap) {
         this.outputStreamMap = outputStreamMap;
     }
 
@@ -90,23 +82,21 @@ public class StrSiddhiApp {
         StringBuilder stringBuilder = new StringBuilder("@App:name(\"" + appName + "\") \n");
         String s;
 
-        for (Map.Entry<String, String> entry : inputStreamMap.entrySet()) {
+        for (Map.Entry<String,StrStream> entry : inputStreamMap.entrySet()) {
 
-            s= entry.getValue();
-            if(s!= null){
+            s = entry.getValue().getDefinition();
+            if (s != null) {
                 stringBuilder.append(entry.getValue()).append(";\n");
             }
-
 
 
         }
 
 
+        for (Map.Entry<String,StrStream> entry : outputStreamMap.entrySet()) {
 
-        for (Map.Entry<String, String> entry : outputStreamMap.entrySet()) {
-
-            s= entry.getValue();
-            if(s!= null){
+            s = entry.getValue().getDefinition();
+            if (s != null) {
                 stringBuilder.append(entry.getValue()).append(";\n");
             }
 
@@ -121,27 +111,25 @@ public class StrSiddhiApp {
         return stringBuilder.toString();
     }
 
-    public String toJsonString(){
+    public String toJsonString() {
         StringBuilder stringBuilder = new StringBuilder();
         String s;
 
-        for (Map.Entry<String, String> entry : inputStreamMap.entrySet()) {
+        for (Map.Entry<String,StrStream> entry : inputStreamMap.entrySet()) {
 
-            s= entry.getValue();
-            if(s!= null){
+            s = entry.getValue().getDefinition();
+            if (s != null) {
                 stringBuilder.append(entry.getValue()).append("; ");
             }
-
 
 
         }
 
 
+        for (Map.Entry<String,StrStream> entry : outputStreamMap.entrySet()) {
 
-        for (Map.Entry<String, String> entry : outputStreamMap.entrySet()) {
-
-            s= entry.getValue();
-            if(s!= null){
+            s = entry.getValue().getDefinition();
+            if (s != null) {
                 stringBuilder.append(entry.getValue()).append("; ");
             }
 
@@ -156,8 +144,6 @@ public class StrSiddhiApp {
         return stringBuilder.toString();
 
     }
-
-
 
 
 }
