@@ -19,7 +19,6 @@ import org.wso2.siddhi.query.api.execution.query.input.stream.StateInputStream;
 import org.wso2.siddhi.query.api.util.ExceptionUtil;
 import org.wso2.siddhi.query.compiler.SiddhiCompiler;
 
-import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -54,14 +53,18 @@ public class SiddhiDeployer {
                 "@map(type='binary')) " +*/
                 "define stream OutputStream (houseId int, maxVal float, minVal float, avgVal double); " +
 
-                "@info(name = 'query1') @dist(parallel ='1',execGroup='group1')" +
+                // "@info(name = 'query1') @dist(parallel ='1',execGroup='group1')" +
                 "from SmartHomeData " +
                 "select houseId as houseId, max(value) as maxVal, min(value) as minVal, avg(value) as avgVal group by houseId " +
                 "insert into UsageStream; " +
 
                 "@info(name = 'query2') @dist(parallel ='2', execGroup='group2')" +
                 "from UsageStream " +
+                "select houseId, maxVal, minVal, avgVal " + "insert into OutputStream;" +
+
+                "from UsageStream " +
                 "select houseId, maxVal, minVal, avgVal " + "insert into OutputStream;";
+        ;
 
         String siddhiAppString1 = "@App:name(\"SmartHomePlan\") " +
                 "@Source(type = 'tcp', context='StockStream',@map(type='binary')) " +
@@ -69,7 +72,6 @@ public class SiddhiDeployer {
 
                 "define stream CheckStockStream (symbol string, volume long);" +
 
-                "@from(eventtable = 'rdbms' ,datasource.name = 'cepDB' , table.name = 'stockInfo' , bloom.filters = 'enable')" +
                 "define table StockTable (symbol string, price float, volume long);" +
 
                 "@info(name = 'query1') @dist(execGroup='group1')" +
@@ -88,7 +90,8 @@ public class SiddhiDeployer {
                 "@info(name = 'query1') @dist(execGroup='group1')" +
                 "from TempStream[temp > 30.0]" +
                 "insert into TempWindow; " +
-                "@info(name = 'query2') @dist(execGroup='group2',parallel='2')" +
+
+                "@info(name = 'query2')" +
                 "from TempWindow " +
                 "join RegulatorStream[isOn == false]#window.length(1) as R " +
                 "on TempWindow.roomNo == R.roomNo" +
@@ -181,6 +184,7 @@ public class SiddhiDeployer {
                 "@Source(type = 'tcp', context='TempStream'," +
                 "@map(type='binary')) " +
                 "define stream TempStream(deviceID long, roomNo int, temp double); " +
+                "@info(name = 'query1') @dist(parallel ='2', execGroup='group1')\n " +
                 "from every e1=TempStream, e2=TempStream[e1.temp + 1 < temp ]\n" +
                 "select e1.temp as initialTemp, e2.temp as finalTemp\n" +
                 "insert into AlertStream;";
@@ -190,6 +194,7 @@ public class SiddhiDeployer {
                 "@Source(type = 'tcp', context='TempStream'," +
                 "@map(type='binary')) " +
                 "define stream TempStream(deviceID long, roomNo int, temp double); " +
+                "@info(name = 'query1') @dist(parallel ='2', execGroup='group1')\n " +
                 "partition with ( deviceID of TempStream )\n" +
                 "begin\n" +
                 "    from TempStream#window.length(10)\n" +
@@ -216,12 +221,12 @@ public class SiddhiDeployer {
         String siddhiAppString13 = "@App:name(\"SmartHomePlan\") \n" +
                 "@dist(parallel ='2', execGroup='group2') " +
                 "define window FiveMinTempWindow (roomNo int, temp double,name string) timeBatch(1 second);\n" +
-                "@info(name = 'query2') @dist(parallel ='1', execGroup='group2') " +
+                "@info(name = 'query2') @dist(parallel ='2', execGroup='group2') " +
                 "from FiveMinTempWindow\n" +
                 "select name, max(temp) as maxValue, roomNo\n" +
                 "insert into MaxSensorReadingStream;";
 
-        siddhiDeployer.DistributeSiddiApp(siddhiAppString11);
+        siddhiDeployer.DistributeSiddiApp(siddhiAppString13);
 
 
    /*     try {
@@ -233,143 +238,170 @@ public class SiddhiDeployer {
 
     }
 
-    //TODO:managing distribution to stream definitions not implemented
+    //TODO:managing distribution to stream definitions not -this can be implemented by storing inmemory-table,window list common to all the queries
+    //TODO:check if partition streams are assigned well
+    //TODO:check for behavior
+    //TODO:create Json file format
+    
 
     public void DistributeSiddiApp(String siddhiAppString) {
 
-        StrSiddhiApp siddhiAppdist;
-        List<String> listInputStream;
         SiddhiApp siddhiApp = SiddhiCompiler.parse(siddhiAppString);
-
-
         SiddhiManager siddhiManager = new SiddhiManager();
         siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(siddhiAppString);
 
-
-        String groupName = null;
-        int parallel = 1;
-        String[] inputStreamDefinition;
-        String[] outputStreamDefinition;
+        StrSiddhiApp siddhiAppdist;
+        String groupName;
+        int parallel;
 
 
         for (ExecutionElement executionElement : siddhiApp.getExecutionElementList()) {
 
+            parallel = 1;
+            groupName = null;
 
             for (int i = 0; i < executionElement.getAnnotations().size(); i++) {
                 if (executionElement.getAnnotations().get(i).getElement("execGroup") != null) {
                     groupName = executionElement.getAnnotations().get(i).getElement("execGroup");
 
                 }
+
                 if (executionElement.getAnnotations().get(i).getElement("parallel") != null) {
                     parallel = Integer.parseInt(executionElement.getAnnotations().get(i).getElement("parallel"));
 
                 }
             }
+            if (groupName != null && !distributiveMap.containsKey(groupName)) {
 
+                siddhiAppdist = new StrSiddhiApp();
+                siddhiAppdist.setAppName(groupName);
+                siddhiAppdist.setParallel(Integer.toString(parallel));
+
+            } else if (distributiveMap.containsKey(groupName)) {
+                siddhiAppdist = distributiveMap.get(groupName);
+
+                //Same execution group given  with different parallel numbers
+                if (!siddhiAppdist.getParallel().equals(Integer.toString(parallel))) {
+
+                    throw new SiddhiAppValidationException("execGroup =" + "\'" + groupName + "\' not assigned a unique @dist(parallel)");
+                }
+            } else
+
+            {
+                //will work if execGroup is not mentioned-those will go to a single app
+                siddhiAppdist = new StrSiddhiApp();
+
+
+                Timestamp timestamp = new Timestamp(System.currentTimeMillis());
+
+                siddhiAppdist.setAppName(Long.toString(timestamp.getTime()));
+                siddhiAppdist.setParallel(Integer.toString(parallel));
+            }
 
             //if execution element is a query
             if (executionElement instanceof Query) {
 
 
-                if (groupName != null && !distributiveMap.containsKey(groupName)) {
-
-                    siddhiAppdist = new StrSiddhiApp();
-                    siddhiAppdist.setAppName(groupName);
-                    siddhiAppdist.setParallel(Integer.toString(parallel));
-
-                } else if (distributiveMap.containsKey(groupName)) {
-                    siddhiAppdist = distributiveMap.get(groupName);
-
-                    //Same execution group given  with different parallel numbers
-                    if (!siddhiAppdist.getParallel().equals(Integer.toString(parallel))) {
-
-                        throw new SiddhiAppValidationException("execGroup =" + "\'" + groupName + "\' not assigned a unique @dist(parallel)");
-                    }
-                } else
-
-                {
-                    //will work if execGroup is not mentioned-those will go to a single app
-                    siddhiAppdist = new StrSiddhiApp();
-
-
-                    Timestamp timestamp = new Timestamp(System.currentTimeMillis());
-
-                    siddhiAppdist.setAppName(Long.toString(timestamp.getTime()));
-                    siddhiAppdist.setParallel(Integer.toString(parallel));
-                }
-
-
-               // if (parallel > 1) {
-                    //send to check for validity of the query type eg:join , window, pattern , sequence
-                    InputStream inputStream = ((Query) executionElement).getInputStream();
-                    checkQueryType(inputStream);
-
-//                }
-
-                listInputStream = ((Query) executionElement).getInputStream().getAllStreamIds();
-
-                for (int j = 0; j < listInputStream.size(); j++) {
-                    String inputStreamId = listInputStream.get(j);
-                    inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel);
-
-
-                    siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0],inputStreamDefinition[1]);
-
-                }
-
-                String outputStreamId = ((Query) executionElement).getOutputStream().getId();
-                outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString, parallel);
-
-                siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition[0],outputStreamDefinition[1]);
-
-                //query taken
-                queryContextStartIndex = ((Query) executionElement).getQueryContextStartIndex();
-                queryContextEndIndex = ((Query) executionElement).getQueryContextEndIndex();
-                String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
-
-
-                siddhiAppdist.setQuery(strQuery);
-
-
-                distributiveMap.put(groupName, siddhiAppdist);
+                distributiveMap.put(groupName, decomposeSiddhiApp((Query) executionElement, parallel, siddhiAppdist, siddhiAppString, siddhiApp));
 
 
             } else if (executionElement instanceof Partition) {
-                List<Query> inputStream = ((Partition) executionElement).getQueryList();
-                checkQueryType(inputStream.get(0).getInputStream());
+
+                List<Query> partitionQueryList = ((Partition) executionElement).getQueryList();
+                queryContextStartIndex = ((Partition) executionElement).getQueryContextStartIndex();
+                queryContextEndIndex = ((Partition) executionElement).getQueryContextEndIndex();
+                String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
+
+
+                for (Query query : partitionQueryList) {
+                    for (int k = 0; k < query.getAnnotations().size(); k++) {
+                        if (query.getAnnotations().get(k).getElement("dist") != null) {
+                            throw new SiddhiAppValidationException("Unsupported:@dist annotation in inside partition queries");
+                        }
+                    }
+                    parallel =1;
+                    decomposeSiddhiApp(query, parallel, siddhiAppdist, siddhiAppString, siddhiApp);
+                }
+
 
             }
 
 
         }
 
+        createJsonConfigurationFile();
+
+    }
+
+
+    private StrSiddhiApp decomposeSiddhiApp(Query executionElement, int parallel, StrSiddhiApp siddhiAppdist, String siddhiAppString, SiddhiApp siddhiApp) {
+        String[] inputStreamDefinition;
+        String[] outputStreamDefinition;
+        List<String> listInputStream;
+
+
+        InputStream inputStream = (executionElement).getInputStream();
+        if (parallel > 1) {
+            //send to check for validity of the query type eg:join , window, pattern , sequence
+
+            checkQueryType(inputStream);
+
+        }
+
+
+        listInputStream = (executionElement).getInputStream().getAllStreamIds();
+
+        for (int j = 0; j < listInputStream.size(); j++) {
+            String inputStreamId = listInputStream.get(j);
+            inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel);
+
+
+            siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0], inputStreamDefinition[1]);
+
+        }
+
+        String outputStreamId = executionElement.getOutputStream().getId();
+        outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString, parallel);
+
+        siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition[0], outputStreamDefinition[1]);
+
+        //query taken
+        queryContextStartIndex = executionElement.getQueryContextStartIndex();
+        queryContextEndIndex = executionElement.getQueryContextEndIndex();
+        String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
+
+
+        siddhiAppdist.setQuery(strQuery, checkQueryStrategy(inputStream));
+        return siddhiAppdist;
+
+
     }
 
 
     private String[] returnStreamDefinition(String streamId, SiddhiApp siddhiApp, String siddhiAppString, int parallel) {
 
-        String[] streamDefinition = null;
+        String[] streamDefinition = new String[2];
 
         if (siddhiApp.getStreamDefinitionMap().containsKey(streamId)) {
 
             queryContextStartIndex = siddhiApp.getStreamDefinitionMap().get(streamId).getQueryContextStartIndex();
             queryContextEndIndex = siddhiApp.getStreamDefinitionMap().get(streamId).getQueryContextEndIndex();
             streamDefinition[0] = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
-            streamDefinition[1] ="Stream";
+            streamDefinition[1] = "Stream";
 
 
         } else if (siddhiApp.getTableDefinitionMap().containsKey(streamId)) {
 
             AbstractDefinition tableDefinition = siddhiApp.getTableDefinitionMap().get(streamId);
-            streamDefinition[1] ="InMemoryTable";
+            streamDefinition[1] = "InMemoryTable";
 
             for (int k = 0; k < tableDefinition.getAnnotations().size(); k++) {
-                if (tableDefinition.getAnnotations().get(k).getElement("Store") != null) {
-                    streamDefinition[1]="Table";
+                if (tableDefinition.getAnnotations().get(k).getName().equals( "Store")) {
+                    streamDefinition[1] = "Table";
                 }
             }
             //need to check In-Memory or other
-            if (parallel != 1) {
+            if (parallel != 1 && streamDefinition[1].equals("InMemoryTable")) {
 
                 throw new SiddhiAppValidationException("In-Memory Tables can not have parallel >1");
 
@@ -410,75 +442,16 @@ public class SiddhiDeployer {
 
     }
 
+    private void createJsonConfigurationFile() {
 
-  /*  private void connectApplications() throws IOException
-
-    {
-        List<String> stream;
         List<StrSiddhiApp> listSiddhiApps = new ArrayList<StrSiddhiApp>(distributiveMap.values());
-        int parallel;
-        String definition;
-
-        StringBuilder stringBuilder1;
-
-        for (int i = 0; i < listSiddhiApps.size(); i++) {
-
-            //TODO:check if outputStream can be only 1
-            stream = new ArrayList<String>(listSiddhiApps.get(i).getOutputStreamMap().keySet());
-
-            for (int j = i + 1; j < listSiddhiApps.size(); j++) {
-
-                if (listSiddhiApps.get(j).getInputStreamMap().containsKey(stream.get(0))) {
-
-                    definition = listSiddhiApps.get(i).getOutputStreamMap().get(stream.get(0));
-                    parallel = Integer.parseInt(listSiddhiApps.get(j).getParallel());
-
-                    if (parallel > 1) {
-                        stringBuilder1 = new StringBuilder("@sink(type='tcp',  context=\'" + stream.get(0) + "\', @map(type='binary'), " +
-                                "@distribution(strategy='roundRobin'");
-
-                        for (int k = 0; k < parallel; k++) {
-                            stringBuilder1.append(",@destination(url='tcp://${" + listSiddhiApps.get(i).getAppName() + " sink_ip}:{" + listSiddhiApps.get(i).getAppName() + " sink_port").append(k + 1).append("}/" + stream.get(0) + "\')");
-                        }
-
-
-                        stringBuilder1.append("))" + definition);
-
-                    } else {
-                        stringBuilder1 = new StringBuilder("@Sink(type = 'tcp',url='tcp://${" + listSiddhiApps.get(i).getAppName() + " sink_ip}:{" + listSiddhiApps.get(i).getAppName() + " sink_port1}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
-                    }
-
-
-                    listSiddhiApps.get(i).getOutputStreamMap().put(stream.get(0), stringBuilder1.toString());
-                    StringBuilder stringBuilder2 = new StringBuilder("@Source(type = 'tcp',url='tcp://${" + listSiddhiApps.get(j).getAppName() + " source_ip}:{" + listSiddhiApps.get(j).getAppName() + " source_port}/" + stream.get(0) + "\'" + ", context=\'" + stream.get(0) + "\',@map(type='binary'))").append(definition);
-                    listSiddhiApps.get(j).getInputStreamMap().put(stream.get(0), stringBuilder2.toString());
-
-                }
-            }
-        }
-
-        //adding sink for the output stream of the final query to support testing
-        //unless user has to give the sink
-        //unless it will be a inmemory stream
-        definition = listSiddhiApps.get(listSiddhiApps.size() - 1).getOutputStreamMap().get("OutputStream");
-        stringBuilder1 = new StringBuilder("@Sink(type = 'tcp',url='tcp://${" + listSiddhiApps.get(listSiddhiApps.size() - 1).getAppName() + " sink_ip}:{" + listSiddhiApps.get(listSiddhiApps.size() - 1).getAppName() + " sink_port1}/" + "OutputStream" + "\'" + ", context=\'" + "OutputStream" + "\',@map(type='binary'))").append(definition);
-        listSiddhiApps.get(listSiddhiApps.size() - 1).getOutputStreamMap().put("OutputStream", stringBuilder1.toString());
-
 
         for (int i = 0; i < listSiddhiApps.size(); i++) {
             System.out.println(listSiddhiApps.get(i).toString());
-
         }
+    }
 
-
-        //creating JSON configuration file
-        CreateJson createJson = new CreateJson();
-        createJson.writeConfiguration(listSiddhiApps, "/home/piyumi/deployment.json");
-
-
-    }*/
-
-    private void checkQueryType(InputStream inputStream) {
+    private void checkQueryType(InputStream inputStream ) {
 
         if (inputStream instanceof JoinInputStream) {
             throw new SiddhiAppValidationException("Join queries can not have parallel greater than 1  ");
@@ -492,7 +465,7 @@ public class SiddhiDeployer {
             List<StreamHandler> streamHandlers = ((SingleInputStream) inputStream).getStreamHandlers();
 
             for (int i = 0; i < streamHandlers.size(); i++) {
-                if (streamHandlers.get(i) instanceof Window) {
+                if (streamHandlers.get(i) instanceof Window ) {
                     throw new SiddhiAppValidationException("Window queries can not have parallel greater than 1  ");
                 }
             }
@@ -501,4 +474,21 @@ public class SiddhiDeployer {
         }
 
     }
+
+    private String checkQueryStrategy(InputStream inputStream) {
+
+        if (inputStream instanceof SingleInputStream) {
+            List<StreamHandler> streamHandlers = ((SingleInputStream) inputStream).getStreamHandlers();
+
+            for (int i = 0; i < streamHandlers.size(); i++) {
+                if (streamHandlers.get(i) instanceof Window) {
+                    return "R";//round robin strategy
+                }
+            }
+        }
+        return "A";
+    }
+
 }
+
+
