@@ -10,6 +10,7 @@ import org.wso2.siddhi.query.api.exception.SiddhiAppValidationException;
 import org.wso2.siddhi.query.api.execution.ExecutionElement;
 import org.wso2.siddhi.query.api.execution.partition.Partition;
 import org.wso2.siddhi.query.api.execution.query.Query;
+import org.wso2.siddhi.query.api.execution.query.input.handler.Filter;
 import org.wso2.siddhi.query.api.execution.query.input.handler.StreamHandler;
 import org.wso2.siddhi.query.api.execution.query.input.handler.Window;
 import org.wso2.siddhi.query.api.execution.query.input.stream.InputStream;
@@ -19,6 +20,7 @@ import org.wso2.siddhi.query.api.execution.query.input.stream.StateInputStream;
 import org.wso2.siddhi.query.api.util.ExceptionUtil;
 import org.wso2.siddhi.query.compiler.SiddhiCompiler;
 
+import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -96,7 +98,7 @@ public class SiddhiDeployer {
                 "from TempStream[temp > 30.0]" +
                 "insert into TempWindow; " +
 
-                "@info(name = 'query2')  @dist(execGroup='group1')"+
+                "@info(name = 'query2')  @dist(execGroup='group1')" +
                 "from TempWindow " +
                 "join RegulatorStream[isOn == false]#window.length(1) as R " +
                 "on TempWindow.roomNo == R.roomNo" +
@@ -231,7 +233,60 @@ public class SiddhiDeployer {
                 "select name, max(temp) as maxValue, roomNo\n" +
                 "insert into MaxSensorReadingStream;";
 
-        siddhiDeployer.DistributeSiddiApp(siddhiAppString2);
+        String siddiAppString14="@source(type='http', receiver.url='http://localhost:9055/endpoints/stockQuote', @map(type='xml'))\n " +
+                "Define stockStream (symbol string, price float, quantity int, tier string);\n" +
+                "\n" +
+                "@Sink(type='email', @map(type='json'), username='wso2', address='test@wso2.com',password='****',host='smtp.gmail.com',subject='Event from SP',to='towso2@gmail.com')\n" +
+                "Define stream takingOverStream(s1 string, s2 string, price float);\n" +
+                "\n" +
+                "@source(type='http', receiver.url='http://localhost:9055/endpoints/trigger', @map(type='xml'))\n" +
+                "Define stream companyTriggerStream(symbol string);\n" +
+                "\n" +
+                "Define table filteredTable (symbol string, price float, quantity int, tier string);\n" +
+                "Define table takingOverTable(s1 string, s2 string, price float);\n" +
+                "\n" +
+                "@info(name = query1)@dist(parellel=2, execGroup=001)\n" +
+                "From stockStream[price > 100]\n" +
+                "Select *\n" +
+                "Insert into filteredStockStream;\n" +
+                "\n" +
+                "@info(name=query2)@dist(parallel=2,execGroup=002)\n" +
+                "Partition with (symbol of filteredStockStream)\n" +
+                "begin\n" +
+                "From filteredStockStream#window.time(5 min)\n" +
+                "Select symbol, avg(price) as avgPrice, quatity\n" +
+                "Insert into #avgPriceStream;\n" +
+                "\n" +
+                "From #avgPriceStream#window.time(5 min) as a right outer join companyTriggerStream#window.length(1)\n" +
+                "On (companyTriggerStream.symbol == a.symbol)\n" +
+                "Select a.symbol, a.avgPrice, a.quantity\n" +
+                "Insert into triggeredAvgStream;\n" +
+                "End;\n" +
+                "\n" +
+                "@info(name=query3)@dist(parallel=1, execGroup=003)\n" +
+                "From  triggeredAvgStream as a1, triggeredAvgStream as a2[a1.avgPrice<a2.avgPrice]\n" +
+                "Select a1.symbol, a2.symbol, a2.avgPrice \n" +
+                "Insert into takingOverStream;\n" +
+                "\n" +
+                "@info(name=query4)@dist(parallel=1, execGroup=004)\n" +
+                "From filteredStockStream\n" +
+                "Select *\n" +
+                "Insert into filteredTable;\n" +
+                "\n" +
+                "@info(name=query5)@dist(parallel=1, execGroup=004)\n" +
+                "From takingOverStream\n" +
+                "Select *\n" +
+                "Insert into takingOverTable;\n" +
+                "\n" +
+                "@info(name=query6)@dist(parallel=3, execGroup=005)\n" +
+                "Partition with (tier of filteredStockStream)\n" +
+                "begin\n" +
+                "From filteredStockStream#log(tier)\n" +
+                "Select *\n" +
+                "Insert into dumbstream;\n" +
+                "End;\n";
+
+        siddhiDeployer.DistributeSiddiApp(siddiAppString14);
 
 
    /*     try {
@@ -247,6 +302,7 @@ public class SiddhiDeployer {
     //TODO:check if partition streams are assigned well
     //TODO:check for behavior
     //TODO:create Json file format
+    //TODO:add highest partition parallel for json file format output streamID
 
 
     public void DistributeSiddiApp(String siddhiAppString) {
@@ -314,11 +370,6 @@ public class SiddhiDeployer {
             } else if (executionElement instanceof Partition) {
 
                 List<Query> partitionQueryList = ((Partition) executionElement).getQueryList();
-/*                queryContextStartIndex = ((Partition) executionElement).getQueryContextStartIndex();
-                queryContextEndIndex = ((Partition) executionElement).getQueryContextEndIndex();
-                String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);*/
-
-
                 for (Query query : partitionQueryList) {
                     for (int k = 0; k < query.getAnnotations().size(); k++) {
                         if (query.getAnnotations().get(k).getElement("dist") != null) {
@@ -356,10 +407,20 @@ public class SiddhiDeployer {
 
         listInputStream = (executionElement).getInputStream().getAllStreamIds();
 
+        //set query
+        queryContextStartIndex = executionElement.getQueryContextStartIndex();
+        queryContextEndIndex = executionElement.getQueryContextEndIndex();
+        String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
+
+        String streamConsumptionStrategy = checkQueryStrategy(inputStream);
+        siddhiAppdist.setQuery(strQuery,streamConsumptionStrategy );
+
+
         for (int j = 0; j < listInputStream.size(); j++) {
             String inputStreamId = listInputStream.get(j);
             inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
-            siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0], inputStreamDefinition[1]);
+            siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0], inputStreamDefinition[1],streamConsumptionStrategy);
+            //System.out.println(inputStreamDefinition[0] +"***********************" + inputStreamDefinition[1]);
 
         }
 
@@ -368,13 +429,7 @@ public class SiddhiDeployer {
 
         siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition[0], outputStreamDefinition[1]);
 
-        //query taken
-        queryContextStartIndex = executionElement.getQueryContextStartIndex();
-        queryContextEndIndex = executionElement.getQueryContextEndIndex();
-        String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
 
-
-        siddhiAppdist.setQuery(strQuery, checkQueryStrategy(inputStream));
         return siddhiAppdist;
 
 
@@ -476,7 +531,29 @@ public class SiddhiDeployer {
         for (int i = 0; i < listSiddhiApps.size(); i++) {
             System.out.println(listSiddhiApps.get(i).toString());
         }
+
+        CreateJson createJson = new CreateJson();
+        try {
+            createJson.writeConfiguration(listSiddhiApps, "/home/piyumi/deployment.json");
+        } catch (IOException e) {
+            logger.error(e);
+        }
     }
+
+/*
+    private void setStreamConsumeStrategy() {
+
+        List<StrSiddhiApp> listSiddhiApps = new ArrayList<StrSiddhiApp>(distributiveMap.values());
+
+        for (int i = 0; i < listSiddhiApps.size(); i++) {
+            for (StrQuery queryList : listSiddhiApps.get(i).getQueryList()) {
+
+            }
+
+
+        }
+    }*/
+
 
     private void checkQueryType(InputStream inputStream) {
 
@@ -508,7 +585,7 @@ public class SiddhiDeployer {
             List<StreamHandler> streamHandlers = ((SingleInputStream) inputStream).getStreamHandlers();
 
             for (int i = 0; i < streamHandlers.size(); i++) {
-                if (streamHandlers.get(i) instanceof Window) {
+                if (streamHandlers.get(i) instanceof Filter) {
                     return "R";//round robin strategy
                 }
             }
@@ -517,5 +594,6 @@ public class SiddhiDeployer {
     }
 
 }
+
 
 
