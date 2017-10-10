@@ -21,6 +21,7 @@ import org.wso2.siddhi.query.compiler.SiddhiCompiler;
 
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,10 +34,12 @@ public class SiddhiDeployer {
     private int[] queryContextStartIndex;
     private Map<String, StrSiddhiApp> distributiveMap;
     private SiddhiAppRuntime siddhiAppRuntime;
+    Map<String, String> inmemoryMap;
 
 
     public SiddhiDeployer() {
         this.distributiveMap = new LinkedHashMap<String, StrSiddhiApp>();
+        this.inmemoryMap = new HashMap<String, String>();
     }
 
     public static void main(String[] args) {
@@ -81,17 +84,19 @@ public class SiddhiDeployer {
                 "@info(name = 'query2') @dist(execGroup='group2')" + "from CheckStockStream[(StockTable.symbol==symbol) in StockTable]" + "insert into OutStream;";
 
 
+        //(Defined) Window in two execGroups
         String siddhiAppString2 = "@App:name(\"SmartHomePlan\") " +
                 "@Source(type = 'tcp', context='TempStream'," +
                 "@map(type='binary')) " +
                 "define stream TempStream(deviceID long, roomNo int, temp double);" +
                 "define stream RegulatorStream(deviceID long, roomNo int, isOn bool);" +
                 "define window TempWindow(deviceID long, roomNo int, temp double) time(1 min);" +
+
                 "@info(name = 'query1') @dist(execGroup='group1')" +
                 "from TempStream[temp > 30.0]" +
                 "insert into TempWindow; " +
 
-                "@info(name = 'query2')" +
+                "@info(name = 'query2')  @dist(execGroup='group1')"+
                 "from TempWindow " +
                 "join RegulatorStream[isOn == false]#window.length(1) as R " +
                 "on TempWindow.roomNo == R.roomNo" +
@@ -226,7 +231,7 @@ public class SiddhiDeployer {
                 "select name, max(temp) as maxValue, roomNo\n" +
                 "insert into MaxSensorReadingStream;";
 
-        siddhiDeployer.DistributeSiddiApp(siddhiAppString13);
+        siddhiDeployer.DistributeSiddiApp(siddhiAppString2);
 
 
    /*     try {
@@ -242,13 +247,14 @@ public class SiddhiDeployer {
     //TODO:check if partition streams are assigned well
     //TODO:check for behavior
     //TODO:create Json file format
-    
+
 
     public void DistributeSiddiApp(String siddhiAppString) {
 
         SiddhiApp siddhiApp = SiddhiCompiler.parse(siddhiAppString);
         SiddhiManager siddhiManager = new SiddhiManager();
         siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(siddhiAppString);
+
 
         StrSiddhiApp siddhiAppdist;
         String groupName;
@@ -302,15 +308,15 @@ public class SiddhiDeployer {
             if (executionElement instanceof Query) {
 
 
-                distributiveMap.put(groupName, decomposeSiddhiApp((Query) executionElement, parallel, siddhiAppdist, siddhiAppString, siddhiApp));
+                distributiveMap.put(groupName, decomposeSiddhiApp((Query) executionElement, groupName, parallel, siddhiAppdist, siddhiAppString, siddhiApp));
 
 
             } else if (executionElement instanceof Partition) {
 
                 List<Query> partitionQueryList = ((Partition) executionElement).getQueryList();
-                queryContextStartIndex = ((Partition) executionElement).getQueryContextStartIndex();
+/*                queryContextStartIndex = ((Partition) executionElement).getQueryContextStartIndex();
                 queryContextEndIndex = ((Partition) executionElement).getQueryContextEndIndex();
-                String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
+                String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);*/
 
 
                 for (Query query : partitionQueryList) {
@@ -319,8 +325,8 @@ public class SiddhiDeployer {
                             throw new SiddhiAppValidationException("Unsupported:@dist annotation in inside partition queries");
                         }
                     }
-                    parallel =1;
-                    decomposeSiddhiApp(query, parallel, siddhiAppdist, siddhiAppString, siddhiApp);
+                    parallel = 1;
+                    decomposeSiddhiApp(query, groupName, parallel, siddhiAppdist, siddhiAppString, siddhiApp);
                 }
 
 
@@ -334,7 +340,7 @@ public class SiddhiDeployer {
     }
 
 
-    private StrSiddhiApp decomposeSiddhiApp(Query executionElement, int parallel, StrSiddhiApp siddhiAppdist, String siddhiAppString, SiddhiApp siddhiApp) {
+    private StrSiddhiApp decomposeSiddhiApp(Query executionElement, String groupName, int parallel, StrSiddhiApp siddhiAppdist, String siddhiAppString, SiddhiApp siddhiApp) {
         String[] inputStreamDefinition;
         String[] outputStreamDefinition;
         List<String> listInputStream;
@@ -343,7 +349,6 @@ public class SiddhiDeployer {
         InputStream inputStream = (executionElement).getInputStream();
         if (parallel > 1) {
             //send to check for validity of the query type eg:join , window, pattern , sequence
-
             checkQueryType(inputStream);
 
         }
@@ -353,15 +358,13 @@ public class SiddhiDeployer {
 
         for (int j = 0; j < listInputStream.size(); j++) {
             String inputStreamId = listInputStream.get(j);
-            inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel);
-
-
+            inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
             siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0], inputStreamDefinition[1]);
 
         }
 
         String outputStreamId = executionElement.getOutputStream().getId();
-        outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString, parallel);
+        outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
 
         siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition[0], outputStreamDefinition[1]);
 
@@ -378,7 +381,7 @@ public class SiddhiDeployer {
     }
 
 
-    private String[] returnStreamDefinition(String streamId, SiddhiApp siddhiApp, String siddhiAppString, int parallel) {
+    private String[] returnStreamDefinition(String streamId, SiddhiApp siddhiApp, String siddhiAppString, int parallel, String groupName) {
 
         String[] streamDefinition = new String[2];
 
@@ -392,11 +395,12 @@ public class SiddhiDeployer {
 
         } else if (siddhiApp.getTableDefinitionMap().containsKey(streamId)) {
 
+
             AbstractDefinition tableDefinition = siddhiApp.getTableDefinitionMap().get(streamId);
             streamDefinition[1] = "InMemoryTable";
 
             for (int k = 0; k < tableDefinition.getAnnotations().size(); k++) {
-                if (tableDefinition.getAnnotations().get(k).getName().equals( "Store")) {
+                if (tableDefinition.getAnnotations().get(k).getName().equals("Store")) {
                     streamDefinition[1] = "Table";
                 }
             }
@@ -404,11 +408,20 @@ public class SiddhiDeployer {
             if (parallel != 1 && streamDefinition[1].equals("InMemoryTable")) {
 
                 throw new SiddhiAppValidationException("In-Memory Tables can not have parallel >1");
-
             }
+
             queryContextStartIndex = siddhiApp.getTableDefinitionMap().get(streamId).getQueryContextStartIndex();
             queryContextEndIndex = siddhiApp.getTableDefinitionMap().get(streamId).getQueryContextEndIndex();
             streamDefinition[0] = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
+
+            if (streamDefinition[1].equals("InMemoryTable") && inmemoryMap.containsKey(streamId)) {
+                if (!inmemoryMap.get(streamId).equals(groupName)) {
+                    throw new SiddhiAppValidationException("Unsupported:Event Table " + streamId +
+                            " In-Memory Table used in two execGroups: execGroup " + groupName + " && " + inmemoryMap.get(streamId));
+                }
+            } else {
+                inmemoryMap.put(streamId, groupName);
+            }
 
         } else if (siddhiApp.getWindowDefinitionMap().containsKey(streamId)) {
 
@@ -421,6 +434,15 @@ public class SiddhiDeployer {
             streamDefinition[0] = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
             streamDefinition[1] = "Window";
 
+            if (inmemoryMap.containsKey(streamId)) {
+                if (!inmemoryMap.get(streamId).equals(groupName)) {
+                    throw new SiddhiAppValidationException("Unsupported:(Defined) Window " + streamId +
+                            " In-Memory window used in two execGroups: execGroup " + groupName + " && " + inmemoryMap.get(streamId));
+                }
+            } else {
+                inmemoryMap.put(streamId, groupName);
+            }
+
 
             //if stream definition is an inferred definition
         } else if (streamDefinition == null) {
@@ -431,8 +453,13 @@ public class SiddhiDeployer {
                 streamDefinition[1] = "Window";
 
             } else if (siddhiAppRuntime.getTableDefinitionMap().containsKey(streamId)) {
+
+                if (parallel != 1) {
+                    throw new SiddhiAppValidationException("(In-Memory Tables can not have parallel >1");
+                }
+
                 streamDefinition[0] = siddhiAppRuntime.getTableDefinitionMap().get(streamId).toString();
-                streamDefinition[1] = "Table";
+                streamDefinition[1] = "InMemoryTable";
 
             }
 
@@ -451,7 +478,7 @@ public class SiddhiDeployer {
         }
     }
 
-    private void checkQueryType(InputStream inputStream ) {
+    private void checkQueryType(InputStream inputStream) {
 
         if (inputStream instanceof JoinInputStream) {
             throw new SiddhiAppValidationException("Join queries can not have parallel greater than 1  ");
@@ -465,7 +492,7 @@ public class SiddhiDeployer {
             List<StreamHandler> streamHandlers = ((SingleInputStream) inputStream).getStreamHandlers();
 
             for (int i = 0; i < streamHandlers.size(); i++) {
-                if (streamHandlers.get(i) instanceof Window ) {
+                if (streamHandlers.get(i) instanceof Window) {
                     throw new SiddhiAppValidationException("Window queries can not have parallel greater than 1  ");
                 }
             }
