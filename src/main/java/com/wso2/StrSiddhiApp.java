@@ -37,12 +37,12 @@ public class StrSiddhiApp {
         this.parallel = parallel;
     }
 
-    public void setInputStream(String key, String inputStream,String type) {
+    public void setInputStream(String key, String inputStream,String type,String streamConsumptionStrategy) {
 
-            inputStreamMap.put(key, new StrStream(type,inputStream));
+            inputStreamMap.put(key, new StrStream(type,inputStream,streamConsumptionStrategy));
     }
 
-    public void setOutputStream(String key, String outputStream,String type) {
+    public void setOutputStream(String key, String outputStream,String type ) {
 
             outputStreamMap.put(key, new StrStream(type,outputStream));
 
@@ -65,12 +65,17 @@ public class StrSiddhiApp {
     }
 
     public void setQuery(String query ,String type) {
-
-
-
             queryList.add(new StrQuery(query,type));
     }
 
+
+    public List<StrQuery> getQueryList() {
+        return queryList;
+    }
+
+    public void setQueryList(List<StrQuery> queryList) {
+        this.queryList = queryList;
+    }
 
     @Override
     public String toString() {
