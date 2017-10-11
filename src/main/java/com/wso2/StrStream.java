@@ -4,6 +4,15 @@ public class StrStream {
     String type;
     String definition;
     String consumptionStrategy;
+    boolean ispartitioned;
+
+    public boolean isIspartitioned() {
+        return ispartitioned;
+    }
+
+    public void setIspartitioned(boolean ispartitioned) {
+        this.ispartitioned = ispartitioned;
+    }
 
     public StrStream(String type, String definition) {
         this.type = type;
