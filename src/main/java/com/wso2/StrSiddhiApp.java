@@ -64,8 +64,8 @@ public class StrSiddhiApp {
         this.outputStreamMap = outputStreamMap;
     }
 
-    public void setQuery(String query ,String type) {
-            queryList.add(new StrQuery(query,type));
+    public void setQuery(String query ) {
+            queryList.add(new StrQuery(query));
     }
 
 
