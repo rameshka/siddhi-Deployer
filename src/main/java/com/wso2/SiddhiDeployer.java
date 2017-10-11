@@ -1,6 +1,7 @@
 package com.wso2;
 
 
+import org.apache.commons.collections.map.HashedMap;
 import org.apache.log4j.Logger;
 import org.wso2.siddhi.core.SiddhiAppRuntime;
 import org.wso2.siddhi.core.SiddhiManager;
@@ -37,11 +38,13 @@ public class SiddhiDeployer {
     private Map<String, StrSiddhiApp> distributiveMap;
     private SiddhiAppRuntime siddhiAppRuntime;
     Map<String, String> inmemoryMap;
+    Map<String, Integer> partitionMap;
 
 
     public SiddhiDeployer() {
         this.distributiveMap = new LinkedHashMap<String, StrSiddhiApp>();
         this.inmemoryMap = new HashMap<String, String>();
+        this.partitionMap = new HashedMap();
     }
 
     public static void main(String[] args) {
@@ -233,28 +236,32 @@ public class SiddhiDeployer {
                 "select name, max(temp) as maxValue, roomNo\n" +
                 "insert into MaxSensorReadingStream;";
 
-        String siddiAppString14="@source(type='http', receiver.url='http://localhost:9055/endpoints/stockQuote', @map(type='xml'))\n " +
-                "Define stockStream (symbol string, price float, quantity int, tier string);\n" +
+        String siddiAppString14 = "@App:name(\"SmartHomePlan\") \n" +
+                "@source(type='http', receiver.url='http://localhost:9055/endpoints/stockQuote', @map(type='xml')) " +
+                "Define stream stockStream(symbol string, price float, quantity int, tier string);\n" +
                 "\n" +
                 "@Sink(type='email', @map(type='json'), username='wso2', address='test@wso2.com',password='****',host='smtp.gmail.com',subject='Event from SP',to='towso2@gmail.com')\n" +
-                "Define stream takingOverStream(s1 string, s2 string, price float);\n" +
+                "Define stream takingOverStream(symbol string, overtakingSymbol string, avgPrice double);\n" +
                 "\n" +
                 "@source(type='http', receiver.url='http://localhost:9055/endpoints/trigger', @map(type='xml'))\n" +
                 "Define stream companyTriggerStream(symbol string);\n" +
                 "\n" +
+                "@Store(type='rdbms', jdbc.url='jdbc:mysql://localhost:3306/cepDB',jdbc.driver.name='', username='root', password='****',field.length='symbol:254')\n" +
                 "Define table filteredTable (symbol string, price float, quantity int, tier string);\n" +
-                "Define table takingOverTable(s1 string, s2 string, price float);\n" +
+
+                "@Store(type='rdbms', jdbc.url='jdbc:mysql://localhost:3306/spDB',jdbc.driver.name='', username='root', password='****',field.length='symbol:254')\n" +
+                "Define table takingOverTable(symbol string, overtakingSymbol string, avgPrice double);\n" +
                 "\n" +
-                "@info(name = query1)@dist(parellel=2, execGroup=001)\n" +
+                "@info(name = 'query1')@dist(parallel='2', execGroup='001')\n" +
                 "From stockStream[price > 100]\n" +
                 "Select *\n" +
                 "Insert into filteredStockStream;\n" +
                 "\n" +
-                "@info(name=query2)@dist(parallel=2,execGroup=002)\n" +
+                "@info(name='query2')@dist(parallel='2',execGroup='002')\n" +
                 "Partition with (symbol of filteredStockStream)\n" +
                 "begin\n" +
                 "From filteredStockStream#window.time(5 min)\n" +
-                "Select symbol, avg(price) as avgPrice, quatity\n" +
+                "Select symbol, avg(price) as avgPrice, quantity\n" +
                 "Insert into #avgPriceStream;\n" +
                 "\n" +
                 "From #avgPriceStream#window.time(5 min) as a right outer join companyTriggerStream#window.length(1)\n" +
@@ -263,22 +270,22 @@ public class SiddhiDeployer {
                 "Insert into triggeredAvgStream;\n" +
                 "End;\n" +
                 "\n" +
-                "@info(name=query3)@dist(parallel=1, execGroup=003)\n" +
-                "From  triggeredAvgStream as a1, triggeredAvgStream as a2[a1.avgPrice<a2.avgPrice]\n" +
-                "Select a1.symbol, a2.symbol, a2.avgPrice \n" +
+                "@info(name='query3')@dist(parallel='1', execGroup='003')\n" +
+                "From  a1=triggeredAvgStream,  a2=triggeredAvgStream[a1.avgPrice<a2.avgPrice]\n" +
+                "Select a1.symbol, a2.symbol as overtakingSymbol, a2.avgPrice \n" +
                 "Insert into takingOverStream;\n" +
                 "\n" +
-                "@info(name=query4)@dist(parallel=1, execGroup=004)\n" +
+                "@info(name='query4')@dist(parallel='4', execGroup='004')\n" +
                 "From filteredStockStream\n" +
                 "Select *\n" +
                 "Insert into filteredTable;\n" +
                 "\n" +
-                "@info(name=query5)@dist(parallel=1, execGroup=004)\n" +
+                "@info(name='query5')@dist(parallel='4', execGroup='004')\n" +
                 "From takingOverStream\n" +
                 "Select *\n" +
                 "Insert into takingOverTable;\n" +
                 "\n" +
-                "@info(name=query6)@dist(parallel=3, execGroup=005)\n" +
+                "@info(name='query6')@dist(parallel='3', execGroup='005')\n" +
                 "Partition with (tier of filteredStockStream)\n" +
                 "begin\n" +
                 "From filteredStockStream#log(tier)\n" +
@@ -286,17 +293,12 @@ public class SiddhiDeployer {
                 "Insert into dumbstream;\n" +
                 "End;\n";
 
+
         siddhiDeployer.DistributeSiddiApp(siddiAppString14);
 
 
-   /*     try {
-            siddhiDeployer.connectApplications();
-        } catch (IOException e) {
-            logger.error("Distributed execution plan creation failure", e);
-        }*/
-
-
     }
+
 
     //TODO:managing distribution to stream definitions not -this can be implemented by storing inmemory-table,window list common to all the queries
     //TODO:check if partition streams are assigned well
@@ -309,6 +311,7 @@ public class SiddhiDeployer {
 
         SiddhiApp siddhiApp = SiddhiCompiler.parse(siddhiAppString);
         SiddhiManager siddhiManager = new SiddhiManager();
+
         siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(siddhiAppString);
 
 
@@ -363,11 +366,21 @@ public class SiddhiDeployer {
             //if execution element is a query
             if (executionElement instanceof Query) {
 
+                //set query
+                queryContextStartIndex = ((Query) executionElement).getQueryContextStartIndex();
+                queryContextEndIndex = ((Query) executionElement).getQueryContextEndIndex();
+                siddhiAppdist.setQuery(ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString));
 
                 distributiveMap.put(groupName, decomposeSiddhiApp((Query) executionElement, groupName, parallel, siddhiAppdist, siddhiAppString, siddhiApp));
 
 
             } else if (executionElement instanceof Partition) {
+
+
+                //set query
+                queryContextStartIndex = ((Partition) executionElement).getQueryContextStartIndex();
+                queryContextEndIndex = ((Partition) executionElement).getQueryContextEndIndex();
+                siddhiAppdist.setQuery(ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString));
 
                 List<Query> partitionQueryList = ((Partition) executionElement).getQueryList();
                 for (Query query : partitionQueryList) {
@@ -377,7 +390,9 @@ public class SiddhiDeployer {
                         }
                     }
                     parallel = 1;
-                    decomposeSiddhiApp(query, groupName, parallel, siddhiAppdist, siddhiAppString, siddhiApp);
+
+
+                    distributiveMap.put(groupName, decomposeSiddhiApp(query, groupName, parallel, siddhiAppdist, siddhiAppString, siddhiApp));
                 }
 
 
@@ -404,30 +419,31 @@ public class SiddhiDeployer {
 
         }
 
+        String streamConsumptionStrategy = checkQueryStrategy(inputStream, executionElement);
+
 
         listInputStream = (executionElement).getInputStream().getAllStreamIds();
-
-        //set query
-        queryContextStartIndex = executionElement.getQueryContextStartIndex();
-        queryContextEndIndex = executionElement.getQueryContextEndIndex();
-        String strQuery = ExceptionUtil.getContext(queryContextStartIndex, queryContextEndIndex, siddhiAppString);
-
-        String streamConsumptionStrategy = checkQueryStrategy(inputStream);
-        siddhiAppdist.setQuery(strQuery,streamConsumptionStrategy );
-
-
         for (int j = 0; j < listInputStream.size(); j++) {
+
             String inputStreamId = listInputStream.get(j);
-            inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
-            siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0], inputStreamDefinition[1],streamConsumptionStrategy);
-            //System.out.println(inputStreamDefinition[0] +"***********************" + inputStreamDefinition[1]);
+
+            //not an inner Stream
+            if (!inputStreamId.contains("#")) {
+                inputStreamDefinition = returnStreamDefinition(inputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
+                siddhiAppdist.setInputStream(inputStreamId, inputStreamDefinition[0], inputStreamDefinition[1], streamConsumptionStrategy);
+            }
+
 
         }
 
         String outputStreamId = executionElement.getOutputStream().getId();
-        outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
 
-        siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition[0], outputStreamDefinition[1]);
+        //not an inner Stream
+        if (!outputStreamId.contains("#")) {
+            outputStreamDefinition = returnStreamDefinition(outputStreamId, siddhiApp, siddhiAppString, parallel, groupName);
+            siddhiAppdist.setOutputStream(outputStreamId, outputStreamDefinition[0], outputStreamDefinition[1]);
+
+        }
 
 
         return siddhiAppdist;
@@ -441,6 +457,7 @@ public class SiddhiDeployer {
         String[] streamDefinition = new String[2];
 
         if (siddhiApp.getStreamDefinitionMap().containsKey(streamId)) {
+
 
             queryContextStartIndex = siddhiApp.getStreamDefinitionMap().get(streamId).getQueryContextStartIndex();
             queryContextEndIndex = siddhiApp.getStreamDefinitionMap().get(streamId).getQueryContextEndIndex();
@@ -500,12 +517,12 @@ public class SiddhiDeployer {
 
 
             //if stream definition is an inferred definition
-        } else if (streamDefinition == null) {
+        } else if (streamDefinition[0] == null) {
 
             if (siddhiAppRuntime.getStreamDefinitionMap().containsKey(streamId)) {
 
                 streamDefinition[0] = siddhiAppRuntime.getStreamDefinitionMap().get(streamId).toString();
-                streamDefinition[1] = "Window";
+                streamDefinition[1] = "Stream";
 
             } else if (siddhiAppRuntime.getTableDefinitionMap().containsKey(streamId)) {
 
@@ -540,21 +557,6 @@ public class SiddhiDeployer {
         }
     }
 
-/*
-    private void setStreamConsumeStrategy() {
-
-        List<StrSiddhiApp> listSiddhiApps = new ArrayList<StrSiddhiApp>(distributiveMap.values());
-
-        for (int i = 0; i < listSiddhiApps.size(); i++) {
-            for (StrQuery queryList : listSiddhiApps.get(i).getQueryList()) {
-
-            }
-
-
-        }
-    }*/
-
-
     private void checkQueryType(InputStream inputStream) {
 
         if (inputStream instanceof JoinInputStream) {
@@ -579,7 +581,45 @@ public class SiddhiDeployer {
 
     }
 
-    private String checkQueryStrategy(InputStream inputStream) {
+    private String checkQueryStrategy(InputStream inputStream, ExecutionElement executionElement, int parallel, String streamId) {
+
+
+        //TODO:if parallel=1 then -->strategy = A
+        //TODO:if parallel>1 then -->if partitionedStream -->strategy=F
+        //TODO:if parallel >1 then -->if not partitioned Stream --->strategy = A
+        //TODO:if parallel >1 then -->if Filter and outside partition  not partitioned stream--->strategy = R
+        //TODO:if parallel >1 then -->if Filter and outside partition and partioned stream ----> unsupported
+
+
+        if (parallel > 1) {
+            if (executionElement instanceof Partition) {
+                if (((Partition) executionElement).getPartitionTypeMap().containsKey(streamId)) {
+
+                    if (!partitionMap.containsKey(streamId)) {
+                        partitionMap.put(streamId, parallel);
+
+                    } else {
+                        if (partitionMap.get(streamId) < parallel) {
+                            partitionMap.put(streamId, parallel);
+                        }
+
+                    }
+                    //field grouping
+                    return "F";
+                } else {
+                    //inside a partition but not a partitioned stream
+                    return "A";
+                }
+
+            }
+
+
+        } else {
+            //all events to all subscribers
+            return "A";
+
+        }
+        
 
         if (inputStream instanceof SingleInputStream) {
             List<StreamHandler> streamHandlers = ((SingleInputStream) inputStream).getStreamHandlers();
